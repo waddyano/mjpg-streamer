@@ -26,10 +26,12 @@ int LibCamera::initCamera(int *width, int *height, int *stride, PixelFormat form
     camera_acquired_ = true;
 
     std::unique_ptr<CameraConfiguration> config;
-    config = camera_->generateConfiguration({ StreamRole::Viewfinder });
-    libcamera::Size size(*width, *height);
+    config = camera_->generateConfiguration({ StreamRole::StillCapture });
+    if (*width && *height) {
+        libcamera::Size size(*width, *height);
+        config->at(0).size = size;
+    }
     config->at(0).pixelFormat = format;
-    config->at(0).size = size;
     if (buffercount)
         config->at(0).bufferCount = buffercount;
     Transform transform = Transform::Identity;
@@ -224,6 +226,13 @@ bool LibCamera::readFrame(LibcameraOutData *frameData){
 
 void LibCamera::set(ControlList controls){
 	this->controls_ = std::move(controls);
+}
+
+void LibCamera::resetCamera(int *width, int *height, int *stride, PixelFormat format, int buffercount, int rotation) {
+    stopCamera();
+    closeCamera();
+    initCamera(width, height, stride, format, buffercount, rotation);
+    startCamera();
 }
 
 void LibCamera::stopCamera() {

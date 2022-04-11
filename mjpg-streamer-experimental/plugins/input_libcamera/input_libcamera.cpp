@@ -68,7 +68,7 @@ static void help() {
     
     fprintf(stderr,
     " ---------------------------------------------------------------\n" \
-    " Help for input plugin..: "INPUT_PLUGIN_NAME"\n" \
+    " Help for input plugin..: " INPUT_PLUGIN_NAME "\n" \
     " ---------------------------------------------------------------\n" \
     " The following parameters can be passed to this plugin:\n\n" \
     " [-r | --resolution ]...: the resolution of the video device,\n" \
@@ -323,7 +323,7 @@ int input_run(int id)
     input * in = &pglobal->in[id];
     context *pctx = (context*)in->context;
 
-    in->buf = (uint8_t *) malloc(pctx->videoIn->width * pctx->videoIn->height);
+    in->buf = (uint8_t *)malloc(pctx->videoIn->width * pctx->videoIn->height);
     in->size = 0;
     
     if(pthread_create(&pctx->worker, 0, worker_thread, in) != 0) {
@@ -336,6 +336,21 @@ int input_run(int id)
     return 0;
 }
 
+/******************************************************************************
+Description.: switch image resolution.
+Input Value.: -
+Return Value: -
+******************************************************************************/
+void switch_resolution(input *in, int width, int height, int buffercount)
+{
+    context *pctx = (context*)in->context;
+    pctx->camera.resetCamera(&width, &height, &pctx->videoIn->stride, formats::BGR888, buffercount, 0);
+    pctx->videoIn->width = width;
+    pctx->videoIn->height = height;
+    free(in->buf);
+    in->buf = (uint8_t *)malloc(width * height);
+}
+
 void *worker_thread(void *arg)
 {
     input * in = (input*)arg;
@@ -343,16 +358,29 @@ void *worker_thread(void *arg)
     context_settings *settings = (context_settings*)pctx->init_settings;
     int quality = settings->quality;
     LibcameraOutData frameData;
-    
+    int snapshot = 0;
+
+    /* Save the image initial settings. */
+    int width = pctx->videoIn->width, height = pctx->videoIn->height;
+    int buffercount = settings->buffercount;
+
     /* set cleanup handler to cleanup allocated resources */
     pthread_cleanup_push(worker_cleanup, arg);
     
     free(settings);
     pctx->init_settings = NULL;
     settings = NULL;
-    
+
     pctx->camera.startCamera();
     while (!pglobal->stop) {
+
+        if (in->snapshot) {
+            /* The image resolution width and height are set to 0, and the maximum resolution will be used. */
+            switch_resolution(in, 0, 0, 1);
+            in->snapshot = 0;
+            snapshot = 1;
+        }
+
         if (!pctx->camera.readFrame(&frameData))
             continue;
             
@@ -361,12 +389,16 @@ void *worker_thread(void *arg)
         pctx->videoIn->framebuffer = frameData.imageData;
         pctx->videoIn->formatIn = V4L2_PIX_FMT_RGB24;
         in->size = compress_image_to_jpeg(pctx->videoIn, in->buf, frameData.size, quality);
-        
+
         /* signal fresh_frame */
         pthread_cond_broadcast(&in->db_update);
         pthread_mutex_unlock(&in->db);
 
         pctx->camera.returnFrameBuffer(frameData);
+        if (snapshot) {
+            switch_resolution(in, width, height, buffercount);
+            snapshot = 0;
+        }
     }
 
     pctx->camera.stopCamera();

@@ -1,10 +1,14 @@
 mjpg-streamer input plugin: input_libcamera
 ============================================
 
+This plugin provides JPEG data from libcamera.
+
 Usage
 =====
 
 ```
+./mjpg_streamer -i "input_libcamera.so -h"
+
 ---------------------------------------------------------------
 Help for input plugin..: Libcamera Input plugin
 ---------------------------------------------------------------
@@ -18,6 +22,7 @@ The following parameters can be passed to this plugin:
                          or a custom value like the following
                          example: 640x480
 [-f | --fps ]..........: frames per second
+[-b | --buffercount ]...: Set the number of request buffers.
 [-q | --quality ] .....: set quality of JPEG encoding
 ---------------------------------------------------------------
 Optional parameters (may not be supported by all cameras):
