@@ -228,11 +228,13 @@ void LibCamera::set(ControlList controls){
 	this->controls_ = std::move(controls);
 }
 
-void LibCamera::resetCamera(int *width, int *height, int *stride, PixelFormat format, int buffercount, int rotation) {
+int LibCamera::resetCamera(int *width, int *height, int *stride, PixelFormat format, int buffercount, int rotation) {
     stopCamera();
     closeCamera();
-    initCamera(width, height, stride, format, buffercount, rotation);
-    startCamera();
+    int ret = initCamera(width, height, stride, format, buffercount, rotation);
+    if (!ret) 
+        ret = startCamera();
+    return ret;
 }
 
 void LibCamera::stopCamera() {

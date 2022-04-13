@@ -37,7 +37,6 @@ using namespace std;
 static globals     *pglobal;
 
 typedef struct {
-    char *filter_args;
     int fps_set, fps,
         quality_set, quality,
         buffercount_set, buffercount,
@@ -81,6 +80,7 @@ static void help() {
     " [-f | --fps ]..........: frames per second\n" \
     " [-b | --buffercount ]...: Set the number of request buffers.\n"  \
     " [-q | --quality ] .....: set quality of JPEG encoding\n" \
+    " [-s | --snapshot ] .....: Set the snapshot resolution, if not set will default to the maximum resolution.\n" \
     " ---------------------------------------------------------------\n" \
     " Optional parameters (may not be supported by all cameras):\n\n"
     " [-br ].................: Set image brightness (integer)\n"\
@@ -117,6 +117,7 @@ int input_init(input_parameter *param, int plugin_no)
 {   
     // char *device = "/dev/video0";
     int width = 640, height = 480, stride, i, device_idx;
+    int snapshot_width = 0, snapshot_height = 0;
     
     input * in;
     context *pctx;
@@ -137,14 +138,12 @@ int input_init(input_parameter *param, int plugin_no)
 	libcamera_AfTrigger_ctrl.group = IN_CMD_GENERIC;
 	libcamera_AfTrigger_ctrl.ctrl.id = 1;
 	libcamera_AfTrigger_ctrl.ctrl.type = V4L2_CTRL_TYPE_BUTTON;
-	strcpy((char*) libcamera_AfTrigger_ctrl.ctrl.name, "AfTrigger");
+	strcpy((char*)libcamera_AfTrigger_ctrl.ctrl.name, "AfTrigger");
 
-	in->in_parameters = (control*) malloc((in->parametercount + 1) * sizeof(control));
+
+	in->in_parameters = (control*)malloc((in->parametercount + 1) * sizeof(control));
 	in->in_parameters[in->parametercount] = libcamera_AfTrigger_ctrl;
 	in->parametercount++;
-
-    // in->name = (char*)malloc((strlen(INPUT_PLUGIN_NAME) + 1) * sizeof(char));
-    // sprintf(in->name, INPUT_PLUGIN_NAME);
 
     param->argv[0] = plugin_name;
 
@@ -173,6 +172,8 @@ int input_init(input_parameter *param, int plugin_no)
             {"ex", required_argument, 0, 0},            // 12
             {"b", required_argument, 0, 0},             // 13
             {"buffercount", required_argument, 0, 0},   // 14
+            {"s", required_argument, 0, 0},             // 15
+            {"snapshot", required_argument, 0, 0},      // 16
             {0, 0, 0, 0}
         };
     
@@ -220,8 +221,14 @@ int input_init(input_parameter *param, int plugin_no)
             break;
         OPTION_INT(12, ex)
             break;
+        /* b, buffercount */
         case 13:
         OPTION_INT(14, buffercount)
+            break;
+        /* s, snapshot */
+        case 15:
+        case 16:
+            parse_resolution_opt(optarg, &snapshot_width, &snapshot_height);
             break;
             
         default:
@@ -277,9 +284,15 @@ int input_init(input_parameter *param, int plugin_no)
     }
 
     pctx->videoIn = (struct vdIn*)malloc(sizeof(struct vdIn));
+    if (pctx->videoIn == NULL) {
+        IPRINT("error allocating context\n");
+        goto fatal_error;
+    }
     pctx->videoIn->width = width;
     pctx->videoIn->height = height;
     pctx->videoIn->stride = stride;
+    pctx->videoIn->snapshot_width = snapshot_width;
+    pctx->videoIn->snapshot_height = snapshot_height;
     
     return 0;
     
@@ -344,11 +357,24 @@ Return Value: -
 void switch_resolution(input *in, int width, int height, int buffercount)
 {
     context *pctx = (context*)in->context;
-    pctx->camera.resetCamera(&width, &height, &pctx->videoIn->stride, formats::BGR888, buffercount, 0);
+    int ret = pctx->camera.resetCamera(&width, &height, &pctx->videoIn->stride, formats::BGR888, buffercount, 0);
+    if (ret) {
+        IPRINT("switch_resolution(): Failed to switch camera resolution.\n");
+        goto fatal_error;
+    }
     pctx->videoIn->width = width;
     pctx->videoIn->height = height;
     free(in->buf);
     in->buf = (uint8_t *)malloc(width * height);
+    if (in->buf == NULL) {
+        IPRINT("error allocating context\n");
+        goto fatal_error;
+    }
+    return;
+fatal_error:
+    worker_cleanup(in);
+    closelog();
+    exit(EXIT_FAILURE);
 }
 
 void *worker_thread(void *arg)
@@ -358,7 +384,7 @@ void *worker_thread(void *arg)
     context_settings *settings = (context_settings*)pctx->init_settings;
     int quality = settings->quality;
     LibcameraOutData frameData;
-    int snapshot = 0;
+    int is_snapshot = 0;
 
     /* Save the image initial settings. */
     int width = pctx->videoIn->width, height = pctx->videoIn->height;
@@ -376,9 +402,9 @@ void *worker_thread(void *arg)
 
         if (in->snapshot) {
             /* The image resolution width and height are set to 0, and the maximum resolution will be used. */
-            switch_resolution(in, 0, 0, 1);
+            switch_resolution(in, pctx->videoIn->snapshot_width, pctx->videoIn->snapshot_height, 1);
             in->snapshot = 0;
-            snapshot = 1;
+            is_snapshot = 1;
         }
 
         if (!pctx->camera.readFrame(&frameData))
@@ -395,9 +421,9 @@ void *worker_thread(void *arg)
         pthread_mutex_unlock(&in->db);
 
         pctx->camera.returnFrameBuffer(frameData);
-        if (snapshot) {
+        if (is_snapshot) {
             switch_resolution(in, width, height, buffercount);
-            snapshot = 0;
+            is_snapshot = 0;
         }
     }
 
