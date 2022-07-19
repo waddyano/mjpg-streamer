@@ -419,7 +419,7 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
                     pthread_mutex_lock(&pctx->control_mutex);
 					if(control_id == 1)
 					{
-						controls_.set(controls::draft::AfTrigger, 1);
+						controls_.set(controls::AfTrigger, 0);
 					} 
                     pctx->camera.set(controls_);
                     pthread_mutex_unlock(&pctx->control_mutex);
