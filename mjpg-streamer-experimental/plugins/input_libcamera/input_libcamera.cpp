@@ -256,7 +256,7 @@ int input_init(input_parameter *param, int plugin_no)
     if (settings->fps){
         frame_time = 1000000 / settings->fps;
         // Set frame rate
-	    controls_.set(controls::FrameDurationLimits, { frame_time, frame_time });
+	    controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
         controls_flag = true;
     }
     if (settings->br) {
@@ -477,7 +477,7 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
                     pthread_mutex_lock(&pctx->control_mutex);
 					if(control_id == 1)
 					{
-						controls_.set(controls::AfTrigger, 0);
+						controls_.set(controls::AfTrigger, controls::AfTriggerStart);
 					} 
                     pctx->camera.set(controls_);
                     pthread_mutex_unlock(&pctx->control_mutex);
