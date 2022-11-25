@@ -124,7 +124,7 @@ int input_init(input_parameter *param, int plugin_no)
     context *pctx;
     context_settings *settings;
     int ret;
-    ControlList controls_;
+    ControlList controls_(controls::controls);
     int64_t frame_time;
     bool controls_flag = false;
     
