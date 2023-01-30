@@ -48,7 +48,8 @@ typedef struct {
         afmode_set, afmode,
         afrange_set, afrange,
         lensposition_set, lensposition,
-        camera_set, camera;
+        camera_set, camera,
+        rotation_set, rotation;
 } context_settings;
 
 typedef struct {
@@ -102,6 +103,7 @@ static void help() {
     " [-f | --fps ]..........: frames per second\n" \
     " [-b | --buffercount ]...: Set the number of request buffers.\n"  \
     " [-q | --quality ] .....: set quality of JPEG encoding\n" \
+    " [-rot | --rotation]....: Request an image rotation, 0 or 180\n"
     " [-s | --snapshot ] .....: Set the snapshot resolution, if not set will default to the maximum resolution.\n" \
     " ---------------------------------------------------------------\n" \
     " Optional parameters (may not be supported by all cameras):\n\n"
@@ -149,7 +151,7 @@ int input_init(input_parameter *param, int plugin_no)
     context *pctx;
     context_settings *settings;
     int ret;
-    ControlList controls_;
+    ControlList controls_(controls::controls);
     int64_t frame_time;
     bool controls_flag = false;
     
@@ -204,6 +206,7 @@ int input_init(input_parameter *param, int plugin_no)
             {"afrange", required_argument, 0, 0},       // 18
             {"lensposition", required_argument, 0, 0},  // 19
             {"camera", required_argument, 0, 0},        // 20
+            {"rotation", required_argument, 0, 0},      // 21
             {0, 0, 0, 0}
         };
     
@@ -268,6 +271,8 @@ int input_init(input_parameter *param, int plugin_no)
             break;
         OPTION_INT(20, camera)
             break;
+        OPTION_INT(21, rotation)
+            break;
         default:
             help();
             return 1;
@@ -286,7 +291,7 @@ int input_init(input_parameter *param, int plugin_no)
         IPRINT("LibCamera::initCamera() failed\n");
         goto fatal_error;
     }
-    pctx->camera.configureStill(width, height, formats::BGR888, settings->buffercount, 0);
+    pctx->camera.configureStill(width, height, formats::BGR888, settings->buffercount, settings->rotation);
     device_id = pctx->camera.getCameraId();
     in->name = (char*)malloc((strlen(device_id) + 1) * sizeof(char));
     sprintf(in->name, device_id);
