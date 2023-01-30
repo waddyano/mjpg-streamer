@@ -2,7 +2,7 @@
 
 using namespace std::placeholders;
 
-int LibCamera::initCamera() {
+int LibCamera::initCamera(int cameraIndex) {
     int ret;
     cm = std::make_unique<CameraManager>();
     ret = cm->start();
@@ -11,7 +11,7 @@ int LibCamera::initCamera() {
               << ret << std::endl;
         return ret;
     }
-    cameraId = cm->cameras()[0]->id();
+    cameraId = cm->cameras()[cameraIndex]->id();
     camera_ = cm->get(cameraId);
     if (!camera_) {
         std::cerr << "Camera " << cameraId << " not found" << std::endl;
@@ -31,11 +31,11 @@ char * LibCamera::getCameraId(){
     return cameraId.data();
 }
 
-void LibCamera::configureStill(int *width, int *height, int *stride, PixelFormat format, int buffercount, int rotation) {
+void LibCamera::configureStill(uint32_t width, uint32_t height, PixelFormat format, int buffercount, int rotation) {
     printf("Configuring still capture...\n");
     config_ = camera_->generateConfiguration({ StreamRole::StillCapture });
-    if (*width && *height) {
-        libcamera::Size size(*width, *height);
+    if (width && height) {
+        Size size(width, height);
         config_->at(0).size = size;
     }
     config_->at(0).pixelFormat = format;
@@ -56,10 +56,6 @@ void LibCamera::configureStill(int *width, int *height, int *stride, PixelFormat
 		throw std::runtime_error("failed to valid stream configurations");
 	else if (validation == CameraConfiguration::Adjusted)
         std::cout << "Stream configuration adjusted" << std::endl;
-
-    *width = config_->at(0).size.width;
-    *height = config_->at(0).size.height;
-    *stride = config_->at(0).stride;
 
     printf("Still capture setup complete\n");
 }
@@ -154,7 +150,7 @@ void LibCamera::StreamDimensions(Stream const *stream, uint32_t *w, uint32_t *h,
 		*stride = cfg.stride;
 }
 
-libcamera::Stream *LibCamera::VideoStream(uint32_t *w, uint32_t *h, uint32_t *stride) const
+Stream *LibCamera::VideoStream(uint32_t *w, uint32_t *h, uint32_t *stride) const
 {
 	StreamDimensions(viewfinder_stream_, w, h, stride);
 	return viewfinder_stream_;
@@ -223,9 +219,9 @@ void LibCamera::set(ControlList controls){
 	this->controls_ = std::move(controls);
 }
 
-int LibCamera::resetCamera(int *width, int *height, int *stride, PixelFormat format, int buffercount, int rotation) {
+int LibCamera::resetCamera(uint32_t width, uint32_t height, PixelFormat format, int buffercount, int rotation) {
     stopCamera();
-    configureStill(width, height, stride, format, buffercount, rotation);
+    configureStill(width, height, format, buffercount, rotation);
     return startCamera();
 }
 
