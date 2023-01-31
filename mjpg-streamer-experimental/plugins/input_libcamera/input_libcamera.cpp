@@ -327,6 +327,8 @@ int input_init(input_parameter *param, int plugin_no)
             controls_.set(controls::AfMode, controls::AfModeManual);
         else
             controls_.set(controls::AfMode, settings->afmode);
+        if (settings->afmode == controls::AfModeAuto)
+            controls_.set(controls::AfTrigger, controls::AfTriggerStart);
         controls_flag = true;
     }
     if (settings->afrange) {
