@@ -37,7 +37,6 @@ using namespace std;
 static globals     *pglobal;
 
 typedef struct {
-    char *filter_args;
     int fps_set, fps,
         quality_set, quality,
         buffercount_set, buffercount,
@@ -46,7 +45,11 @@ typedef struct {
         sa_set, sa,
         gain_set, gain,
         ex_set, ex,
-        rot_set, rot;
+        afmode_set, afmode,
+        afrange_set, afrange,
+        lensposition_set, lensposition,
+        camera_set, camera,
+        rotation_set, rotation;
 } context_settings;
 
 typedef struct {
@@ -57,6 +60,23 @@ typedef struct {
     struct vdIn *videoIn;
 } context;
 
+static const struct {
+  const char * k;
+  const int v;
+} autofocus_mode[] = {
+  { "manual", controls::AfModeManual },
+  { "auto", controls::AfModeAuto },
+  { "continuous", controls::AfModeContinuous },
+};
+
+static const struct {
+  const char * k;
+  const int v;
+} autofocus_range[] = {
+  { "normal", controls::AfRangeNormal },
+  { "macro", controls::AfRangeMacro },
+  { "full", controls::AfRangeFull },
+};
 
 void *worker_thread(void *);
 void worker_cleanup(void *);
@@ -79,10 +99,12 @@ static void help() {
     resolutions_help("                          ");
     
     fprintf(stderr,
+    " [-c | --camera ].......: Chooses the camera to use.\n"
     " [-f | --fps ]..........: frames per second\n" \
     " [-b | --buffercount ]...: Set the number of request buffers.\n"  \
     " [-q | --quality ] .....: set quality of JPEG encoding\n" \
-    " [--rot ] ..............: rotate image\n" \
+    " [-rot | --rotation]....: Request an image rotation, 0 or 180\n"
+    " [-s | --snapshot ] .....: Set the snapshot resolution, if not set will default to the maximum resolution.\n" \
     " ---------------------------------------------------------------\n" \
     " Optional parameters (may not be supported by all cameras):\n\n"
     " [-br ].................: Set image brightness (integer)\n"\
@@ -90,6 +112,9 @@ static void help() {
     " [-sa ].................: Set image saturation (integer)\n"\
     " [-ex ].................: Set exposure (integer)\n"\
     " [-gain ]...............: Set gain (integer)\n"
+    " [-afmode]..............: Control to set the mode of the AF (autofocus) algorithm.(manual, auto, continuous)\n"
+    " [-afrange].............: Set the range of focus distances that is scanned.(normal, macro, full)\n"
+    " [-lensposition]........: Set the lens to a particular focus position, expressed as a reciprocal distance (0 moves the lens to infinity), or \"default\" for the hyperfocal distance"
     " ---------------------------------------------------------------\n\n"\
     );
 }
@@ -118,13 +143,15 @@ Return Value: 0 if everything is ok
 int input_init(input_parameter *param, int plugin_no)
 {   
     // char *device = "/dev/video0";
-    int width = 640, height = 480, stride, i, device_idx;
+    char *device_id;
+    int width = 640, height = 480, i, device_idx;
+    int snapshot_width = 0, snapshot_height = 0;
     
     input * in;
     context *pctx;
     context_settings *settings;
     int ret;
-    ControlList controls_;
+    ControlList controls_(controls::controls);
     int64_t frame_time;
     bool controls_flag = false;
     
@@ -139,14 +166,12 @@ int input_init(input_parameter *param, int plugin_no)
 	libcamera_AfTrigger_ctrl.group = IN_CMD_GENERIC;
 	libcamera_AfTrigger_ctrl.ctrl.id = 1;
 	libcamera_AfTrigger_ctrl.ctrl.type = V4L2_CTRL_TYPE_BUTTON;
-	strcpy((char*) libcamera_AfTrigger_ctrl.ctrl.name, "AfTrigger");
+	strcpy((char*)libcamera_AfTrigger_ctrl.ctrl.name, "AfTrigger");
 
-	in->in_parameters = (control*) malloc((in->parametercount + 1) * sizeof(control));
+
+	in->in_parameters = (control*)malloc((in->parametercount + 1) * sizeof(control));
 	in->in_parameters[in->parametercount] = libcamera_AfTrigger_ctrl;
 	in->parametercount++;
-
-    // in->name = (char*)malloc((strlen(INPUT_PLUGIN_NAME) + 1) * sizeof(char));
-    // sprintf(in->name, INPUT_PLUGIN_NAME);
 
     param->argv[0] = plugin_name;
 
@@ -175,7 +200,13 @@ int input_init(input_parameter *param, int plugin_no)
             {"ex", required_argument, 0, 0},            // 12
             {"b", required_argument, 0, 0},             // 13
             {"buffercount", required_argument, 0, 0},   // 14
-            {"rot", required_argument, 0, 0},           // 15
+            {"s", required_argument, 0, 0},             // 15
+            {"snapshot", required_argument, 0, 0},      // 16
+            {"afmode", required_argument, 0, 0},        // 17
+            {"afrange", required_argument, 0, 0},       // 18
+            {"lensposition", required_argument, 0, 0},  // 19
+            {"camera", required_argument, 0, 0},        // 20
+            {"rotation", required_argument, 0, 0},      // 21
             {0, 0, 0, 0}
         };
     
@@ -223,12 +254,25 @@ int input_init(input_parameter *param, int plugin_no)
             break;
         OPTION_INT(12, ex)
             break;
+        /* b, buffercount */
         case 13:
         OPTION_INT(14, buffercount)
             break;
-        OPTION_INT(15, rot)
+        /* s, snapshot */
+        case 15:
+        case 16:
+            parse_resolution_opt(optarg, &snapshot_width, &snapshot_height);
             break;
-            
+        OPTION_MULTI(17, afmode, autofocus_mode)
+            break;
+        OPTION_MULTI(18, afrange, autofocus_range)
+            break;
+        OPTION_INT(19, lensposition)
+            break;
+        OPTION_INT(20, camera)
+            break;
+        OPTION_INT(21, rotation)
+            break;
         default:
             help();
             return 1;
@@ -242,19 +286,20 @@ int input_init(input_parameter *param, int plugin_no)
     } else {
         settings->buffercount = MAX(settings->buffercount, 1);
     }
-    ret = pctx->camera.initCamera(&width, &height, &stride, formats::BGR888, settings->buffercount, settings->rot);
-    char *device_id = pctx->camera.getCameraId();
-    in->name = (char*)malloc((strlen(device_id) + 1) * sizeof(char));
-    sprintf(in->name, device_id);
+    ret = pctx->camera.initCamera(settings->camera);
     if (ret) {
         IPRINT("LibCamera::initCamera() failed\n");
         goto fatal_error;
     }
+    pctx->camera.configureStill(width, height, formats::BGR888, settings->buffercount, settings->rotation);
+    device_id = pctx->camera.getCameraId();
+    in->name = (char*)malloc((strlen(device_id) + 1) * sizeof(char));
+    sprintf(in->name, device_id);
 
     if (settings->fps){
         frame_time = 1000000 / settings->fps;
         // Set frame rate
-	    controls_.set(controls::FrameDurationLimits, { frame_time, frame_time });
+	    controls_.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>({ frame_time, frame_time }));
         controls_flag = true;
     }
     if (settings->br) {
@@ -277,14 +322,36 @@ int input_init(input_parameter *param, int plugin_no)
         controls_.set(controls::ExposureTime, settings->ex);
         controls_flag = true;
     }
+    if (settings->afmode) {
+        if (settings->lensposition)
+            controls_.set(controls::AfMode, controls::AfModeManual);
+        else
+            controls_.set(controls::AfMode, settings->afmode);
+        if (settings->afmode == controls::AfModeAuto)
+            controls_.set(controls::AfTrigger, controls::AfTriggerStart);
+        controls_flag = true;
+    }
+    if (settings->afrange) {
+        controls_.set(controls::AfRange, settings->afrange);
+        controls_flag = true;
+    }
+    if (settings->lensposition) {
+        controls_.set(controls::LensPosition, settings->lensposition);
+        controls_flag = true;
+    }
     if (controls_flag) {
         pctx->camera.set(controls_);
     }
 
     pctx->videoIn = (struct vdIn*)malloc(sizeof(struct vdIn));
+    if (pctx->videoIn == NULL) {
+        IPRINT("error allocating context\n");
+        goto fatal_error;
+    }
     pctx->videoIn->width = width;
     pctx->videoIn->height = height;
-    pctx->videoIn->stride = stride;
+    pctx->videoIn->snapshot_width = snapshot_width;
+    pctx->videoIn->snapshot_height = snapshot_height;
     
     return 0;
     
@@ -328,7 +395,7 @@ int input_run(int id)
     input * in = &pglobal->in[id];
     context *pctx = (context*)in->context;
 
-    in->buf = (uint8_t *) malloc(pctx->videoIn->width * pctx->videoIn->height);
+    in->buf = (uint8_t *)malloc(pctx->videoIn->width * pctx->videoIn->height);
     in->size = 0;
     
     if(pthread_create(&pctx->worker, 0, worker_thread, in) != 0) {
@@ -341,6 +408,32 @@ int input_run(int id)
     return 0;
 }
 
+/******************************************************************************
+Description.: switch image resolution.
+Input Value.: -
+Return Value: -
+******************************************************************************/
+void switch_resolution(input *in, uint32_t width, uint32_t height, uint32_t buffercount)
+{
+    context *pctx = (context*)in->context;
+    int ret = pctx->camera.resetCamera(width, height, formats::BGR888, buffercount, 0);
+    if (ret) {
+        IPRINT("switch_resolution(): Failed to switch camera resolution.\n");
+        goto fatal_error;
+    }
+    pctx->camera.VideoStream(&pctx->videoIn->width, &pctx->videoIn->height, &pctx->videoIn->stride);
+    in->buf = (uint8_t *)realloc(in->buf, pctx->videoIn->width * pctx->videoIn->height);
+    if (in->buf == NULL) {
+        IPRINT("error allocating context\n");
+        goto fatal_error;
+    }
+    return;
+fatal_error:
+    worker_cleanup(in);
+    closelog();
+    exit(EXIT_FAILURE);
+}
+
 void *worker_thread(void *arg)
 {
     input * in = (input*)arg;
@@ -348,16 +441,32 @@ void *worker_thread(void *arg)
     context_settings *settings = (context_settings*)pctx->init_settings;
     int quality = settings->quality;
     LibcameraOutData frameData;
-    
+    int is_switch = 0;
+
+    /* Save the image initial settings. */
+    uint32_t width = pctx->videoIn->width, height = pctx->videoIn->height;
+    uint32_t buffercount = settings->buffercount;
+
     /* set cleanup handler to cleanup allocated resources */
     pthread_cleanup_push(worker_cleanup, arg);
     
     free(settings);
     pctx->init_settings = NULL;
     settings = NULL;
-    
+
     pctx->camera.startCamera();
+    pctx->camera.VideoStream(&pctx->videoIn->width, &pctx->videoIn->height, &pctx->videoIn->stride);
     while (!pglobal->stop) {
+
+        if (in->snapshot) {
+            if (width != pctx->videoIn->snapshot_width || height != pctx->videoIn->snapshot_height) {
+                /* The image resolution width and height are set to 0, and the maximum resolution will be used. */
+                switch_resolution(in, pctx->videoIn->snapshot_width, pctx->videoIn->snapshot_height, 1);
+                is_switch = 1;
+            }
+            in->snapshot = 0;
+        }
+
         if (!pctx->camera.readFrame(&frameData))
             continue;
             
@@ -366,12 +475,16 @@ void *worker_thread(void *arg)
         pctx->videoIn->framebuffer = frameData.imageData;
         pctx->videoIn->formatIn = V4L2_PIX_FMT_RGB24;
         in->size = compress_image_to_jpeg(pctx->videoIn, in->buf, frameData.size, quality);
-        
+
         /* signal fresh_frame */
         pthread_cond_broadcast(&in->db_update);
         pthread_mutex_unlock(&in->db);
 
         pctx->camera.returnFrameBuffer(frameData);
+        if (is_switch) {
+            switch_resolution(in, width, height, buffercount);
+            is_switch = 0;
+        }
     }
 
     pctx->camera.stopCamera();
@@ -408,10 +521,8 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
 {
     input * in = &pglobal->in[plugin];
     context *pctx = (context*)in->context;
-    ControlList controls_;
 
     DBG("Requested cmd (id: %d) for the %d plugin. Group: %d value: %d\n", control_id, plugin_number, group, value);
-
     int i;
     switch(typecode)
     {
@@ -422,9 +533,11 @@ int input_cmd(int plugin, unsigned int control_id, unsigned int typecode, int va
 				{
 					DBG("Generic control found (id: %d): %s\n", control_id, in->in_parameters[i].ctrl.name);
                     pthread_mutex_lock(&pctx->control_mutex);
+                    ControlList controls_;
 					if(control_id == 1)
 					{
-						controls_.set(controls::draft::AfTrigger, 1);
+                        controls_.set(controls::AfMode, controls::AfModeAuto);
+						controls_.set(controls::AfTrigger, controls::AfTriggerStart);
 					} 
                     pctx->camera.set(controls_);
                     pthread_mutex_unlock(&pctx->control_mutex);
