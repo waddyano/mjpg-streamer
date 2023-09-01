@@ -372,13 +372,13 @@ int input_stop(int id)
     input * in = &pglobal->in[id];
     context *pctx = (context*)in->context;
 
-    free(pctx->videoIn);
-
-    free(in->buf);
-    in->buf = NULL;
-    in->size = 0;
-
     if (pctx != NULL) {
+        free(pctx->videoIn);
+
+        free(in->buf);
+        in->buf = NULL;
+        in->size = 0;
+
         DBG("will cancel input thread\n");
         pthread_cancel(pctx->worker);
     }
